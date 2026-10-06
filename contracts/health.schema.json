@@ -1,0 +1,217 @@
+{
+  "$defs": {
+    "ContainerCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "running": {
+          "minimum": 0,
+          "title": "Running",
+          "type": "integer"
+        },
+        "stopped": {
+          "minimum": 0,
+          "title": "Stopped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "running",
+        "stopped"
+      ],
+      "title": "ContainerCounts",
+      "type": "object"
+    },
+    "DiskInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "root_free_gb": {
+          "minimum": 0,
+          "title": "Root Free Gb",
+          "type": "number"
+        },
+        "root_total_gb": {
+          "exclusiveMinimum": 0,
+          "title": "Root Total Gb",
+          "type": "number"
+        },
+        "root_usage_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Root Usage Percent",
+          "type": "number"
+        },
+        "root_used_gb": {
+          "minimum": 0,
+          "title": "Root Used Gb",
+          "type": "number"
+        }
+      },
+      "required": [
+        "root_total_gb",
+        "root_used_gb",
+        "root_free_gb",
+        "root_usage_percent"
+      ],
+      "title": "DiskInfo",
+      "type": "object"
+    },
+    "NetworkInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "interface": {
+          "minLength": 1,
+          "title": "Interface",
+          "type": "string"
+        },
+        "packet_loss_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Packet Loss Percent",
+          "type": "number"
+        },
+        "rx_bytes": {
+          "minimum": 0,
+          "title": "Rx Bytes",
+          "type": "integer"
+        },
+        "tx_bytes": {
+          "minimum": 0,
+          "title": "Tx Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "interface",
+        "rx_bytes",
+        "tx_bytes",
+        "packet_loss_percent"
+      ],
+      "title": "NetworkInfo",
+      "type": "object"
+    },
+    "SystemInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_temperature_c": {
+          "maximum": 125,
+          "minimum": -40,
+          "title": "Cpu Temperature C",
+          "type": "number"
+        },
+        "cpu_usage_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Cpu Usage Percent",
+          "type": "number"
+        },
+        "hostname": {
+          "maxLength": 253,
+          "minLength": 1,
+          "title": "Hostname",
+          "type": "string"
+        },
+        "load_1m": {
+          "minimum": 0,
+          "title": "Load 1M",
+          "type": "number"
+        },
+        "os": {
+          "minLength": 1,
+          "title": "Os",
+          "type": "string"
+        },
+        "ram_total_mb": {
+          "exclusiveMinimum": 0,
+          "title": "Ram Total Mb",
+          "type": "integer"
+        },
+        "ram_usage_percent": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Ram Usage Percent",
+          "type": "number"
+        },
+        "ram_used_mb": {
+          "minimum": 0,
+          "title": "Ram Used Mb",
+          "type": "integer"
+        },
+        "uptime_seconds": {
+          "minimum": 0,
+          "title": "Uptime Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hostname",
+        "os",
+        "uptime_seconds",
+        "cpu_usage_percent",
+        "cpu_temperature_c",
+        "load_1m",
+        "ram_total_mb",
+        "ram_used_mb",
+        "ram_usage_percent"
+      ],
+      "title": "SystemInfo",
+      "type": "object"
+    }
+  },
+  "$id": "https://edgeio.local/schemas/health.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Health report published by an edge device to the device.health Kafka topic. Cross-field rules (Tailscale address range, RAM/disk consistency, clock skew) are enforced by the worker, not by this schema.",
+  "properties": {
+    "containers": {
+      "$ref": "#/$defs/ContainerCounts"
+    },
+    "device_id": {
+      "format": "ipv4",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "disk": {
+      "$ref": "#/$defs/DiskInfo"
+    },
+    "network": {
+      "$ref": "#/$defs/NetworkInfo"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "services": {
+      "additionalProperties": {
+        "enum": [
+          "running",
+          "stopped",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "title": "Services",
+      "type": "object"
+    },
+    "system": {
+      "$ref": "#/$defs/SystemInfo"
+    },
+    "timestamp": {
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "device_id",
+    "timestamp",
+    "system",
+    "disk",
+    "network",
+    "services",
+    "containers"
+  ],
+  "title": "HealthReport",
+  "type": "object"
+}
