@@ -5,8 +5,10 @@ import threading
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 
+import psycopg
 from confluent_kafka import Consumer, Producer
 
 from edgeio_contracts.models import HealthReport
@@ -15,7 +17,7 @@ from edgeio_contracts.validation import ContractError, validate_report
 from .config import WorkerSettings
 from .db import Database
 from .dlq import build_dlq_record
-from .store import store_batch
+from .store import process_report, store_batch
 from .sweeper import sweep_offline
 
 log = logging.getLogger(__name__)
@@ -65,34 +67,71 @@ def handle_batch(
     messages: Sequence[Any], settings: WorkerSettings, producer: Any, db: Database
 ) -> None:
     now = datetime.now(UTC)
-    reports: list[HealthReport] = []
+    accepted: list[tuple[Any, HealthReport]] = []
     rejected = 0
     for msg in messages:
         if msg.error() is not None:
             log.warning("kafka message error", extra={"error": str(msg.error())})
             continue
         try:
-            reports.append(validate_report(msg.value(), now))
+            accepted.append((msg, validate_report(msg.value(), now)))
         except ContractError as exc:
-            record = build_dlq_record(
-                key=msg.key(),
-                value=msg.value(),
-                source_topic=msg.topic(),
-                partition=msg.partition(),
-                offset=msg.offset(),
-                error=exc,
-                failed_at=now,
-            )
-            producer.produce(
-                settings.kafka_dlq_topic, key=record.key, value=record.value, headers=record.headers
-            )
+            _dead_letter(producer, settings, msg, exc.stage, exc.message, now)
             rejected += 1
-            log.warning(
-                "message rejected",
-                extra={"stage": exc.stage, "error": exc.message, "offset": msg.offset()},
-            )
+
+    reports = [report for _, report in accepted]
+    try:
+        if reports:
+            db.run_in_transaction(lambda conn: store_batch(conn, reports))
+    except psycopg.OperationalError:
+        raise  # only raised while shutting down; nothing is committed
+    except psycopg.Error:
+        # A report the contract accepted but the database refused. Store the batch one
+        # report at a time so a single poison message can't block the partition.
+        log.exception("batch failed to store; isolating reports")
+        rejected += _store_individually(accepted, settings, producer, db, now)
+
     if rejected and producer.flush(10) > 0:
         raise RuntimeError("dead-letter messages not delivered; refusing to commit offsets")
-    if reports:
-        db.run_in_transaction(lambda conn: store_batch(conn, reports))
     log.info("batch processed", extra={"stored": len(reports), "rejected": rejected})
+
+
+def _store_individually(
+    accepted: Sequence[tuple[Any, HealthReport]],
+    settings: WorkerSettings,
+    producer: Any,
+    db: Database,
+    now: datetime,
+) -> int:
+    failed = 0
+    for msg, report in accepted:
+        try:
+            db.run_in_transaction(partial(process_report, report=report))
+        except psycopg.OperationalError:
+            raise
+        except psycopg.Error as exc:
+            _dead_letter(producer, settings, msg, "store", str(exc), now)
+            failed += 1
+    return failed
+
+
+def _dead_letter(
+    producer: Any, settings: WorkerSettings, msg: Any, stage: str, message: str, now: datetime
+) -> None:
+    record = build_dlq_record(
+        key=msg.key(),
+        value=msg.value(),
+        source_topic=msg.topic(),
+        partition=msg.partition(),
+        offset=msg.offset(),
+        stage=stage,
+        message=message,
+        failed_at=now,
+    )
+    producer.produce(
+        settings.kafka_dlq_topic, key=record.key, value=record.value, headers=record.headers
+    )
+    log.warning(
+        "message dead-lettered",
+        extra={"stage": stage, "error": message, "offset": msg.offset()},
+    )

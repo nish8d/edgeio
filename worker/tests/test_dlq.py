@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 
-from edgeio_contracts.validation import ContractError
 from edgeio_worker.dlq import build_dlq_record
 
 FAILED_AT = datetime(2026, 10, 6, 9, 45, tzinfo=UTC)
@@ -13,7 +12,8 @@ def test_record_preserves_original_bytes_and_explains_failure() -> None:
         source_topic="device.health",
         partition=3,
         offset=42,
-        error=ContractError("decode", "Invalid JSON"),
+        stage="decode",
+        message="Invalid JSON",
         failed_at=FAILED_AT,
     )
     assert record.key == b"100.64.0.9"
@@ -35,7 +35,8 @@ def test_missing_value_becomes_empty_bytes() -> None:
         source_topic="device.health",
         partition=0,
         offset=0,
-        error=ContractError("decode", "message has no value"),
+        stage="decode",
+        message="message has no value",
         failed_at=FAILED_AT,
     )
     assert record.key is None and record.value == b""

@@ -102,3 +102,57 @@ def test_valid_reports_are_stored_and_invalid_ones_dead_lettered(
     assert dict(dead[0].headers())["error_stage"] == b"decode"
     status = conn.execute("SELECT status, last_seen FROM devices").fetchone()
     assert status == ("warning", now)  # sample has 1 stopped container → warning
+
+
+def test_report_failing_in_the_database_is_dead_lettered_and_worker_keeps_going(
+    kafka_bootstrap: str, database_url: str, conn: psycopg.Connection
+) -> None:
+    # A DB-side failure that no contract check can predict (stands in for any DataError etc.).
+    conn.execute(
+        "CREATE OR REPLACE FUNCTION reject_poison() RETURNS trigger LANGUAGE plpgsql AS $$ "
+        "BEGIN IF NEW.hostname = 'poison' THEN RAISE EXCEPTION 'poison row'; END IF; "
+        "RETURN NEW; END $$"
+    )
+    conn.execute(
+        "CREATE TRIGGER reject_poison BEFORE INSERT ON health_readings "
+        "FOR EACH ROW EXECUTE FUNCTION reject_poison()"
+    )
+    topic, dlq = create_topics(kafka_bootstrap)
+    now = datetime.now(UTC).replace(microsecond=0)
+    good = set_path(sample_payload(), "timestamp", now.isoformat())
+    poison = set_path(sample_payload(), "timestamp", now.isoformat())
+    set_path(poison, "device_id", "100.64.0.9")
+    set_path(poison, "system.hostname", "poison")
+    poison_bytes = json.dumps(poison).encode()
+
+    producer = Producer({"bootstrap.servers": kafka_bootstrap})
+    producer.produce(topic, key=b"100.64.0.9", value=poison_bytes)
+    producer.produce(topic, key=b"100.101.12.7", value=json.dumps(good).encode())
+    assert producer.flush(10) == 0
+
+    settings = WorkerSettings(
+        kafka_bootstrap=kafka_bootstrap,
+        kafka_topic=topic,
+        kafka_dlq_topic=dlq,
+        kafka_group_id=f"worker-{uuid.uuid4()}",
+        database_url=database_url,
+        poll_timeout_seconds=0.2,
+        sweep_interval_seconds=3600,
+    )
+    stop = threading.Event()
+    worker = threading.Thread(target=run, args=(settings, stop), daemon=True)
+    worker.start()
+    try:
+        wait_for(lambda: count_readings(conn) == 1, timeout=60)
+        dead = read_topic(kafka_bootstrap, dlq, expected=1, timeout=30)
+        assert worker.is_alive()
+    finally:
+        stop.set()
+        worker.join(timeout=30)
+        conn.execute("DROP TRIGGER IF EXISTS reject_poison ON health_readings")
+
+    assert len(dead) == 1
+    assert dead[0].value() == poison_bytes
+    headers = dict(dead[0].headers())
+    assert headers["error_stage"] == b"store"
+    assert b"poison row" in headers["error"]
