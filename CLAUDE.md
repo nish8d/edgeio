@@ -162,7 +162,7 @@ Error handling: DB unavailable → don't commit offsets, back off and retry (nev
 
 ## 8. Database (`db/migrations/`)
 
-Plain ordered SQL files (`0001_init.sql`, …), applied idempotently at startup by a small migrate step. Never edit an applied migration; add a new one.
+Plain ordered SQL files (`0001_init.sql`, …), applied idempotently at startup by a small migrate step, each in its own transaction. A file whose first line is `-- migrate: no-transaction` runs statement by statement outside a transaction (needed for `refresh_continuous_aggregate`). Never edit an applied migration; add a new one. Recreating a continuous aggregate must be followed by a backfill refresh (see `0004`), or history outside the policy window disappears.
 
 - `devices` — `device_id` (PK, `inet`), `hostname`, `os`, `first_seen`, `last_seen`, `status` (`healthy|warning|critical|offline`), latest key metrics, `last_rx_bytes`/`last_tx_bytes` (previous counters for rate derivation).
 - `health_readings` — **hypertable** on `ts`; unique `(device_id, ts)`; flattened columns for all numeric metrics + derived fields; `raw JSONB` with the full original payload.
