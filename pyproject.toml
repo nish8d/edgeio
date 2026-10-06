@@ -3,7 +3,7 @@ name = "edgeio"
 version = "0.1.0"
 description = "Simulated edge device health monitoring platform"
 requires-python = ">=3.12"
-dependencies = ["edgeio-contracts"]
+dependencies = ["edgeio-contracts", "edgeio-simulator"]
 
 [dependency-groups]
 dev = [
@@ -18,14 +18,15 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["contracts"]
+members = ["contracts", "simulator"]
 
 [tool.uv.sources]
 edgeio-contracts = { workspace = true }
+edgeio-simulator = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
-testpaths = ["contracts/tests"]
+testpaths = ["contracts/tests", "simulator/tests"]
 
 [tool.ruff]
 line-length = 100

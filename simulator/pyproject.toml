@@ -1,0 +1,18 @@
+[project]
+name = "edgeio-simulator"
+version = "0.1.0"
+description = "Virtual edge device fleet publishing health reports to Kafka"
+requires-python = ">=3.12"
+dependencies = [
+    "edgeio-contracts",
+    "confluent-kafka>=2.5",
+    "pydantic-settings>=2.4",
+    "python-json-logger>=3.1",
+]
+
+[tool.uv.sources]
+edgeio-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
