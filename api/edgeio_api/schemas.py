@@ -93,3 +93,10 @@ class MetricSeries(BaseModel):
     start: datetime
     end: datetime
     points: list[MetricPoint]
+
+
+class AlertList(BaseModel):
+    items: list[Alert]
+    total: int
+    limit: int
+    offset: int
