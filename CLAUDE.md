@@ -164,7 +164,7 @@ Error handling: DB unavailable → don't commit offsets, back off and retry (nev
 
 Plain ordered SQL files (`0001_init.sql`, …), applied idempotently at startup by a small migrate step. Never edit an applied migration; add a new one.
 
-- `devices` — `device_id` (PK, `inet`), `hostname`, `os`, `first_seen`, `last_seen`, `status` (`healthy|warning|critical|offline`), latest key metrics.
+- `devices` — `device_id` (PK, `inet`), `hostname`, `os`, `first_seen`, `last_seen`, `status` (`healthy|warning|critical|offline`), latest key metrics, `last_rx_bytes`/`last_tx_bytes` (previous counters for rate derivation).
 - `health_readings` — **hypertable** on `ts`; unique `(device_id, ts)`; flattened columns for all numeric metrics + derived fields; `raw JSONB` with the full original payload.
 - `service_status` — latest state per `(device_id, service)` with `changed_at`.
 - `alerts` — `id`, `device_id`, `rule`, `severity` (`warning|critical`), `opened_at`, `resolved_at` (null = open), `last_value`, `message`. Partial unique index guarantees **at most one open alert per (device_id, rule)**.
