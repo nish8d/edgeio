@@ -15,6 +15,7 @@ from edgeio_api.config import ApiSettings
 from edgeio_contracts.models import HealthReport
 from edgeio_contracts.samples import sample_report
 from edgeio_worker.migrate import apply_migrations
+from edgeio_worker.store import process_report
 
 TIMESCALE_IMAGE = "timescale/timescaledb:2.17.2-pg16"
 BASE_TIME = datetime(2026, 10, 6, 9, 0, tzinfo=UTC)
@@ -77,3 +78,16 @@ def kafka_bootstrap() -> Iterator[str]:
 def api(database_url: str) -> Iterator[TestClient]:
     with TestClient(create_app(ApiSettings(database_url=database_url))) as client:
         yield client
+
+
+@pytest.fixture
+def seed(
+    conn: psycopg.Connection[Any], report_at: Callable[..., HealthReport]
+) -> Callable[..., HealthReport]:
+    def store(n: int, minutes: int = 0, changes: dict[str, Any] | None = None) -> HealthReport:
+        identity = {"device_id": f"100.64.0.{n}", "system.hostname": f"edge-{n:03d}"}
+        report = report_at(minutes, {**identity, **(changes or {})})
+        process_report(conn, report)
+        return report
+
+    return store

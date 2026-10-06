@@ -12,7 +12,7 @@ from psycopg_pool import PoolTimeout
 
 from .config import ApiSettings
 from .db import create_pool
-from .routers import health
+from .routers import devices, health
 
 log = logging.getLogger(__name__)
 
@@ -47,4 +47,5 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app.add_exception_handler(PoolTimeout, _database_unavailable)
     app.add_exception_handler(psycopg.OperationalError, _database_unavailable)
     app.include_router(health.router, prefix=API_PREFIX)
+    app.include_router(devices.router, prefix=API_PREFIX)
     return app

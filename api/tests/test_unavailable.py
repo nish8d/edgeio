@@ -21,3 +21,9 @@ def test_health_reports_database_unavailable(client: TestClient) -> None:
     response = client.get("/api/v1/healthz")
     assert response.status_code == 503
     assert response.json() == {"status": "degraded", "database": "unavailable"}
+
+
+def test_endpoints_answer_503_when_database_is_down(client: TestClient) -> None:
+    response = client.get("/api/v1/devices")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "database unavailable"}
