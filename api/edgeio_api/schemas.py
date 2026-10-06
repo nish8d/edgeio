@@ -77,3 +77,19 @@ class DeviceDetail(DeviceSummary):
     services: list[ServiceStatus]
     latest: LatestReading | None
     open_alerts: list[Alert]
+
+
+class MetricPoint(BaseModel):
+    ts: datetime
+    value: float | None
+    max: float | None = None
+
+
+class MetricSeries(BaseModel):
+    device_id: str
+    metric: MetricName
+    unit: str
+    bucket: Bucket
+    start: datetime
+    end: datetime
+    points: list[MetricPoint]

@@ -1,10 +1,14 @@
 """All SQL the API runs. Read-only; identifiers come only from fixed allow-lists."""
 
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from ipaddress import IPv4Address
 from typing import Any
 
+from psycopg import sql
+
 from .db import DbConn
-from .schemas import AlertState, DeviceStatus, Severity
+from .schemas import AlertState, Bucket, DeviceStatus, MetricName, Severity
 
 Row = dict[str, Any]
 
@@ -96,3 +100,66 @@ def list_alerts(
         "offset": offset,
     }
     return conn.execute(_LIST_ALERTS, params).fetchall(), _count(conn, _COUNT_ALERTS, params)
+
+
+@dataclass(frozen=True)
+class MetricSource:
+    raw: str  # column in health_readings
+    avg: str  # column in the rollup views
+    max: str
+    unit: str
+
+
+METRICS: dict[str, MetricSource] = {
+    "cpu": MetricSource("cpu_usage_percent", "cpu_avg", "cpu_max", "%"),
+    "temperature": MetricSource("cpu_temperature_c", "temp_avg", "temp_max", "°C"),
+    "ram": MetricSource("ram_usage_percent", "ram_avg", "ram_max", "%"),
+    "disk": MetricSource("disk_usage_percent", "disk_avg", "disk_max", "%"),
+    "packet_loss": MetricSource("packet_loss_percent", "packet_loss_avg", "packet_loss_max", "%"),
+    "rx_rate": MetricSource("rx_rate_bps", "rx_rate_avg", "rx_rate_max", "bps"),
+    "tx_rate": MetricSource("tx_rate_bps", "tx_rate_avg", "tx_rate_max", "bps"),
+}
+
+_ROLLUPS: dict[str, tuple[str, str]] = {
+    "1h": ("health_hourly", "1 hour"),
+    "1d": ("health_daily", "1 day"),
+}
+RAW_MAX_SPAN = timedelta(hours=24)
+HOURLY_MAX_SPAN = timedelta(days=30)
+
+
+def choose_bucket(start: datetime, end: datetime) -> Bucket:
+    span = end - start
+    if span <= RAW_MAX_SPAN:
+        return "raw"
+    if span <= HOURLY_MAX_SPAN:
+        return "1h"
+    return "1d"
+
+
+def metric_points(
+    conn: DbConn,
+    device_id: IPv4Address,
+    metric: MetricName,
+    bucket: Bucket,
+    start: datetime,
+    end: datetime,
+) -> list[Row]:
+    source = METRICS[metric]
+    if bucket == "raw":
+        query = sql.SQL(
+            "SELECT ts, {value} AS value, NULL::double precision AS max FROM health_readings "
+            "WHERE device_id = %s AND ts >= %s AND ts < %s ORDER BY ts"
+        ).format(value=sql.Identifier(source.raw))
+        return conn.execute(query, (device_id, start, end)).fetchall()
+    view, width = _ROLLUPS[bucket]
+    query = sql.SQL(
+        "SELECT bucket AS ts, {avg} AS value, {max} AS max FROM {view} "
+        "WHERE device_id = %s AND bucket >= time_bucket(%s::interval, %s::timestamptz) "
+        "AND bucket < %s ORDER BY bucket"
+    ).format(
+        avg=sql.Identifier(source.avg),
+        max=sql.Identifier(source.max),
+        view=sql.Identifier(view),
+    )
+    return conn.execute(query, (device_id, width, start, end)).fetchall()
