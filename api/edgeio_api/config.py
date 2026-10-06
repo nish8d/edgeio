@@ -10,6 +10,8 @@ class ApiSettings(BaseSettings):
     pool_min_size: int = Field(default=1, ge=1)
     pool_max_size: int = Field(default=5, ge=1)
     pool_timeout_seconds: float = Field(default=5.0, gt=0)
+    statement_timeout_ms: int = Field(default=5000, gt=0)
+    connect_timeout_seconds: int = Field(default=5, gt=0)
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "INFO"

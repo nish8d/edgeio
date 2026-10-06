@@ -21,7 +21,14 @@ def create_pool(settings: ApiSettings) -> ConnectionPool[Any]:
         timeout=settings.pool_timeout_seconds,
         open=False,
         check=ConnectionPool.check_connection,  # drop connections broken by a DB restart
-        kwargs={"autocommit": True, "row_factory": dict_row},
+        kwargs={
+            "autocommit": True,
+            "row_factory": dict_row,
+            # Bound every wait so a paused or unreachable database yields a 503, not a hang.
+            "connect_timeout": settings.connect_timeout_seconds,
+            "tcp_user_timeout": settings.connect_timeout_seconds * 1000,
+            "options": f"-c statement_timeout={settings.statement_timeout_ms}",
+        },
     )
 
 
