@@ -210,7 +210,7 @@ React + Vite + TypeScript. TanStack Query (refetch every 30 s), Recharts, React 
 
 ## 12. Commands
 
-(Targets to be created with the scaffold; keep this section in sync with the Makefile.)
+(Keep this section in sync with the Makefile. `make test` = unit tests only; `make test-int` needs Docker.)
 
 ```
 make up          # docker compose up -d --build (full stack)
@@ -222,9 +222,10 @@ make lint        # ruff + mypy + eslint/tsc
 make fmt         # ruff format + prettier
 make psql        # psql shell into timescaledb
 make topics      # list topics / consumer lag
+make schema      # regenerate contracts/health.schema.json from the Pydantic model
 ```
 
-Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-network), Timescale `5432`.
+Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-network), Timescale `5433` on the host (override with `TIMESCALE_PORT`; 5432 is often taken by a local Postgres) / `timescaledb:5432` in-network.
 
 ## 13. Testing
 
@@ -246,4 +247,4 @@ Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-net
 
 ## 15. Build status
 
-Design approved 2026-10-06. Nothing implemented yet. Next step: write the implementation plan, then build in this order: contracts → db migrations → simulator → worker → API → dashboard → compose/Makefile polish.
+Design approved 2026-10-06. Plan 1 (pipeline: contracts, simulator, worker, TimescaleDB, Compose) implemented — see `docs/superpowers/plans/2026-10-06-edgeio-pipeline.md`. Next: Plan 2 — REST API (§10) and dashboard (§11).

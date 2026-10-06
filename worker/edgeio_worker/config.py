@@ -11,7 +11,7 @@ class WorkerSettings(BaseSettings):
     kafka_topic: str = "device.health"
     kafka_dlq_topic: str = "device.health.dlq"
     kafka_group_id: str = "edgeio-worker"
-    database_url: str = "postgresql://edgeio:edgeio@localhost:5432/edgeio"
+    database_url: str = "postgresql://edgeio:edgeio@localhost:5433/edgeio"
     migrations_dir: Path = Path("db/migrations")
     batch_size: int = Field(default=500, ge=1)
     poll_timeout_seconds: float = Field(default=1.0, gt=0)
