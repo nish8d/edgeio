@@ -100,3 +100,29 @@ class AlertList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class StatusCounts(BaseModel):
+    healthy: int
+    warning: int
+    critical: int
+    offline: int
+    total: int
+
+
+class AlertCounts(BaseModel):
+    warning: int
+    critical: int
+
+
+class RankedDevice(BaseModel):
+    device_id: str
+    hostname: str
+    value: float
+
+
+class FleetSummary(BaseModel):
+    devices: StatusCounts
+    open_alerts: AlertCounts
+    hottest: list[RankedDevice]
+    fullest_disks: list[RankedDevice]

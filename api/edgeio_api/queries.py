@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from ipaddress import IPv4Address
-from typing import Any
+from typing import Any, Literal
 
 from psycopg import sql
 
@@ -163,3 +163,36 @@ def metric_points(
         view=sql.Identifier(view),
     )
     return conn.execute(query, (device_id, width, start, end)).fetchall()
+
+
+def status_counts(conn: DbConn) -> Row:
+    row = conn.execute(
+        "SELECT count(*) FILTER (WHERE status = 'healthy') AS healthy, "
+        "count(*) FILTER (WHERE status = 'warning') AS warning, "
+        "count(*) FILTER (WHERE status = 'critical') AS critical, "
+        "count(*) FILTER (WHERE status = 'offline') AS offline, "
+        "count(*) AS total FROM devices"
+    ).fetchone()
+    assert row is not None  # an aggregate always returns one row
+    return row
+
+
+def open_alert_counts(conn: DbConn) -> Row:
+    row = conn.execute(
+        "SELECT count(*) FILTER (WHERE severity = 'warning') AS warning, "
+        "count(*) FILTER (WHERE severity = 'critical') AS critical "
+        "FROM alerts WHERE resolved_at IS NULL"
+    ).fetchone()
+    assert row is not None
+    return row
+
+
+def top_devices(
+    conn: DbConn, column: Literal["cpu_temperature_c", "disk_usage_percent"], limit: int
+) -> list[Row]:
+    query = sql.SQL(
+        "SELECT host(device_id) AS device_id, hostname, {col} AS value FROM devices "
+        "WHERE {col} IS NOT NULL AND status <> 'offline' "
+        "ORDER BY {col} DESC, hostname LIMIT %s"
+    ).format(col=sql.Identifier(column))
+    return conn.execute(query, (limit,)).fetchall()

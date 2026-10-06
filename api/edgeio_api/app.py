@@ -12,7 +12,7 @@ from psycopg_pool import PoolTimeout
 
 from .config import ApiSettings
 from .db import create_pool
-from .routers import alerts, devices, health
+from .routers import alerts, devices, fleet, health
 
 log = logging.getLogger(__name__)
 
@@ -49,4 +49,5 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(devices.router, prefix=API_PREFIX)
     app.include_router(alerts.router, prefix=API_PREFIX)
+    app.include_router(fleet.router, prefix=API_PREFIX)
     return app
