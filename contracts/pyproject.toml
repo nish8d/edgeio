@@ -1,0 +1,10 @@
+[project]
+name = "edgeio-contracts"
+version = "0.1.0"
+description = "device.health wire-format models (single source of truth)"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

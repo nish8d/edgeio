@@ -52,7 +52,7 @@ edgeio/
   contracts/            # Single source of truth for the wire format
     health.schema.json  #   JSON Schema (for real devices / non-Python producers)
     edgeio_contracts/   #   Pydantic models used by simulator, worker, api
-    fixtures/           #   valid/ and invalid/ example payloads for tests
+    fixtures/valid/     #   example payloads (invalid cases are generated in tests)
   simulator/            # Virtual device fleet → Kafka
   worker/               # Kafka consumer: validate → transform → store → alert
   api/                  # FastAPI read API over TimescaleDB
@@ -229,7 +229,7 @@ Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-net
 ## 13. Testing
 
 - **TDD** for logic: write the failing test first.
-- **Unit (pytest):** simulator state transitions (monotonic counters, uptime, fault lifecycles, payload always valid unless malformed injected); contract validation using fixture files in `contracts/fixtures/{valid,invalid}/`; transform + rate derivation (incl. counter reset); alert rule evaluation incl. hysteresis and open/resolve transitions.
+- **Unit (pytest):** simulator state transitions (monotonic counters, uptime, fault lifecycles, payload always valid unless malformed injected); contract validation — valid example payloads in `contracts/fixtures/valid/`, invalid cases as a mutation table over `edgeio_contracts.samples.sample_payload()`; transform + rate derivation (incl. counter reset); alert rule evaluation incl. hysteresis and open/resolve transitions.
 - **Integration (`tests/integration/`, Testcontainers):** produce valid + invalid messages → assert rows in `health_readings`, `devices`, `alerts`; assert DLQ receives invalid ones; assert redelivery doesn't duplicate rows.
 - **API:** FastAPI `TestClient` against a migrated, seeded Timescale container.
 - **Dashboard:** Vitest + Testing Library for components.
