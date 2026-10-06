@@ -8,7 +8,7 @@ import {
   YAxis,
 } from "recharts";
 import { useMetric } from "../api/hooks";
-import type { MetricPoint } from "../api/types";
+import { type ChartPoint, toChartPoints } from "../lib/chartPoints";
 import { formatAxisTime, formatTimestamp } from "../lib/format";
 import type { ChartSpec } from "../lib/metrics";
 import type { RangeKey } from "../lib/range";
@@ -26,6 +26,11 @@ export function MetricChart({ deviceId, spec, range }: Props) {
   const points = data?.points ?? [];
   const latest = [...points].reverse().find((p) => p.value != null)?.value ?? null;
   const rollup = data !== undefined && data.bucket !== "raw";
+  const chartData = toChartPoints(points);
+  // A true time axis over the requested window, so gaps and partial coverage stay visible.
+  const domain: [number, number] | undefined = data
+    ? [Date.parse(data.start), Date.parse(data.end)]
+    : undefined;
 
   return (
     <section className="panel chart-card" aria-label={spec.title}>
@@ -43,11 +48,14 @@ export function MetricChart({ deviceId, spec, range }: Props) {
         <>
           <div className="chart-plot">
             <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+              <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                 <CartesianGrid vertical={false} stroke="var(--grid)" />
                 <XAxis
-                  dataKey="ts"
-                  tickFormatter={(ts: string) => formatAxisTime(ts, range)}
+                  dataKey="t"
+                  type="number"
+                  scale="time"
+                  domain={domain ?? ["dataMin", "dataMax"]}
+                  tickFormatter={(t: number) => formatAxisTime(new Date(t).toISOString(), range)}
                   stroke="var(--axis)"
                   tick={TICK}
                   tickLine={false}
@@ -111,13 +119,13 @@ interface TooltipContent {
 }
 
 function ChartTooltip({ active, payload, format }: TooltipContent) {
-  const point = payload?.[0]?.payload as MetricPoint | undefined;
+  const point = payload?.[0]?.payload as ChartPoint | undefined;
   if (!active || !point) return null;
   return (
     <div className="chart-tooltip">
       <strong>{point.value == null ? "—" : format(point.value)}</strong>
       {point.max != null && <span>max {format(point.max)}</span>}
-      <span className="muted">{formatTimestamp(point.ts)}</span>
+      <span className="muted">{formatTimestamp(new Date(point.t).toISOString())}</span>
     </div>
   );
 }
