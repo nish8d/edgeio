@@ -5,6 +5,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from testcontainers.community.kafka import KafkaContainer
 from testcontainers.community.postgres import PostgresContainer
 
 from edgeio_contracts.models import HealthReport
@@ -44,3 +45,9 @@ def report_at() -> Callable[..., HealthReport]:
         return sample_report({"timestamp": ts, "containers.stopped": 0, **(changes or {})})
 
     return build
+
+
+@pytest.fixture(scope="session")
+def kafka_bootstrap() -> Iterator[str]:
+    with KafkaContainer().with_kraft() as kafka:
+        yield kafka.get_bootstrap_server()
