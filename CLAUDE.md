@@ -151,7 +151,7 @@ Stands in for `health.py` on each device. Publishes **directly to Kafka** (no in
 Pipeline per poll batch:
 
 1. **Validate** — decode JSON → Pydantic model. Failure → produce to DLQ with error details, continue.
-2. **Transform** — normalize timestamp to UTC; flatten into a row; derive `disk_free_percent`, `rx_rate_bps`/`tx_rate_bps` from the previous counter values (in-memory cache per device, warmed from DB on startup; counter decrease = reboot → rate null).
+2. **Transform** — normalize timestamp to UTC; flatten into a row; derive `disk_free_percent`, `rx_rate_bps`/`tx_rate_bps` (bits/s) from the previous counters stored on the `devices` row (read with `SELECT … FOR UPDATE`; no in-memory cache; counter decrease = reboot → rate null). Readings older than `last_seen` are stored as history but don't update device state or alerts.
 3. **Store** — single transaction: insert into `health_readings` (`ON CONFLICT (device_id, ts) DO NOTHING`), upsert `devices` (`last_seen`, latest metrics, status), upsert `service_status`.
 4. **Alert** — evaluate rules (§9) against the reading; open/update/resolve rows in `alerts` in the same transaction.
 5. **Commit offsets** only after the DB transaction commits. → at-least-once; duplicates are harmless due to idempotent inserts.
