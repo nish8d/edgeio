@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-int lint fmt psql topics schema
+.PHONY: up down logs test test-int lint fmt psql topics schema openapi dev-api dev-dashboard
 
 up:
 	docker compose up -d --build
@@ -33,3 +33,13 @@ topics:
 
 schema:
 	uv run python -m edgeio_contracts.export_schema > contracts/health.schema.json
+
+openapi:
+	uv run python -m edgeio_api.export_openapi > dashboard/openapi.json
+	@if [ -d dashboard/node_modules ]; then npm --prefix dashboard run gen:api; fi
+
+dev-api:
+	uv run python -m edgeio_api
+
+dev-dashboard:
+	npm --prefix dashboard run dev
