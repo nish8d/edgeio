@@ -67,6 +67,22 @@ INVALID_MUTATIONS: list[tuple[str, str, Any]] = [
     ("missing_section", "disk", DELETE),
     ("missing_field", "system.hostname", DELETE),
     ("empty_hostname", "system.hostname", ""),
+    # Values that would overflow the DB columns or that Postgres text/jsonb rejects.
+    ("ram_total_overflows_int32", "system.ram_total_mb", 3_000_000_000),
+    ("stopped_containers_overflow_int32", "containers.stopped", 3_000_000_000),
+    ("rx_bytes_overflows_int64", "network.rx_bytes", 2**64),
+    ("uptime_overflows_int64", "system.uptime_seconds", 2**63),
+    ("nul_in_hostname", "system.hostname", "edge\u0000001"),
+    ("nul_in_service_name", "services.dock\u0000er", "running"),
+    ("empty_service_name", "services.", "running"),
+    # Strict typing: no coercion that the JSON Schema would reject.
+    ("int_as_string", "system.ram_total_mb", "16384"),
+    ("version_as_string", "schema_version", "1"),
+    ("version_as_bool", "schema_version", True),
+    ("version_as_float", "schema_version", 1.0),
+    ("epoch_timestamp", "timestamp", 1790000000),
+    ("infinite_load", "system.load_1m", float("inf")),
+    ("nan_temperature", "system.cpu_temperature_c", float("nan")),
 ]
 
 
@@ -78,4 +94,4 @@ INVALID_MUTATIONS: list[tuple[str, str, Any]] = [
 def test_invalid_payloads_are_rejected(path: str, value: Any) -> None:
     payload = set_path(sample_payload(), path, value)
     with pytest.raises(ValidationError):
-        HealthReport.model_validate(payload)
+        HealthReport.model_validate_json(json.dumps(payload))

@@ -4,11 +4,13 @@
       "additionalProperties": false,
       "properties": {
         "running": {
+          "maximum": 2147483647,
           "minimum": 0,
           "title": "Running",
           "type": "integer"
         },
         "stopped": {
+          "maximum": 2147483647,
           "minimum": 0,
           "title": "Stopped",
           "type": "integer"
@@ -60,6 +62,7 @@
       "properties": {
         "interface": {
           "minLength": 1,
+          "pattern": "^[^\\x00]+$",
           "title": "Interface",
           "type": "string"
         },
@@ -70,11 +73,13 @@
           "type": "number"
         },
         "rx_bytes": {
+          "maximum": 9223372036854775807,
           "minimum": 0,
           "title": "Rx Bytes",
           "type": "integer"
         },
         "tx_bytes": {
+          "maximum": 9223372036854775807,
           "minimum": 0,
           "title": "Tx Bytes",
           "type": "integer"
@@ -107,6 +112,7 @@
         "hostname": {
           "maxLength": 253,
           "minLength": 1,
+          "pattern": "^[^\\x00]+$",
           "title": "Hostname",
           "type": "string"
         },
@@ -117,11 +123,14 @@
         },
         "os": {
           "minLength": 1,
+          "pattern": "^[^\\x00]+$",
           "title": "Os",
           "type": "string"
         },
         "ram_total_mb": {
           "exclusiveMinimum": 0,
+          "maximum": 2147483647,
+          "minimum": 0,
           "title": "Ram Total Mb",
           "type": "integer"
         },
@@ -132,11 +141,13 @@
           "type": "number"
         },
         "ram_used_mb": {
+          "maximum": 2147483647,
           "minimum": 0,
           "title": "Ram Used Mb",
           "type": "integer"
         },
         "uptime_seconds": {
+          "maximum": 9223372036854775807,
           "minimum": 0,
           "title": "Uptime Seconds",
           "type": "integer"
@@ -181,14 +192,20 @@
       "type": "integer"
     },
     "services": {
-      "additionalProperties": {
-        "enum": [
-          "running",
-          "stopped",
-          "failed",
-          "unknown"
-        ],
-        "type": "string"
+      "patternProperties": {
+        "^[^\\x00]+$": {
+          "enum": [
+            "running",
+            "stopped",
+            "failed",
+            "unknown"
+          ],
+          "type": "string"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 64,
+        "minLength": 1
       },
       "title": "Services",
       "type": "object"

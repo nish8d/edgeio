@@ -1,6 +1,7 @@
 """Canonical example payload and helpers for building variations in tests."""
 
 import copy
+import json
 from collections.abc import Mapping
 from typing import Any, Final
 
@@ -63,4 +64,4 @@ def sample_report(changes: Mapping[str, Any] | None = None) -> HealthReport:
     payload = sample_payload()
     for path, value in (changes or {}).items():
         set_path(payload, path, value)
-    return HealthReport.model_validate(payload)
+    return HealthReport.model_validate_json(json.dumps(payload))
