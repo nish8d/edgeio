@@ -5,6 +5,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from psycopg import sql
 from testcontainers.community.kafka import KafkaContainer
 from testcontainers.community.postgres import PostgresContainer
 
@@ -31,11 +32,27 @@ def database_url(migrations_dir: Path) -> Iterator[str]:
         yield url
 
 
+ROLLUPS = ("health_hourly", "health_daily")
+
+
+def _refresh(conn: psycopg.Connection[Any]) -> None:
+    for view in ROLLUPS:
+        conn.execute(
+            sql.SQL("CALL refresh_continuous_aggregate({}, NULL, NULL)").format(sql.Literal(view))
+        )
+
+
 @pytest.fixture
 def conn(database_url: str) -> Iterator[psycopg.Connection[Any]]:
     with psycopg.connect(database_url, autocommit=True) as c:
         c.execute("TRUNCATE health_readings, devices, service_status, alerts RESTART IDENTITY")
+        _refresh(c)  # drop rollup rows materialized by earlier tests
         yield c
+
+
+@pytest.fixture
+def refresh_rollups(conn: psycopg.Connection[Any]) -> Callable[[], None]:
+    return lambda: _refresh(conn)
 
 
 @pytest.fixture
