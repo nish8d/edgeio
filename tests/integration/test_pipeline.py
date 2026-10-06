@@ -156,3 +156,39 @@ def test_report_failing_in_the_database_is_dead_lettered_and_worker_keeps_going(
     headers = dict(dead[0].headers())
     assert headers["error_stage"] == b"store"
     assert b"poison row" in headers["error"]
+
+
+def test_sweeper_flags_a_silent_device_once_the_worker_has_caught_up(
+    kafka_bootstrap: str, database_url: str, conn: psycopg.Connection
+) -> None:
+    topic, dlq = create_topics(kafka_bootstrap)
+    stale = (datetime.now(UTC) - timedelta(minutes=30)).replace(microsecond=0)
+    producer = Producer({"bootstrap.servers": kafka_bootstrap})
+    payload = set_path(sample_payload(), "timestamp", stale.isoformat())
+    producer.produce(topic, key=b"100.101.12.7", value=json.dumps(payload).encode())
+    assert producer.flush(10) == 0
+
+    settings = WorkerSettings(
+        kafka_bootstrap=kafka_bootstrap,
+        kafka_topic=topic,
+        kafka_dlq_topic=dlq,
+        kafka_group_id=f"worker-{uuid.uuid4()}",
+        database_url=database_url,
+        poll_timeout_seconds=0.2,
+        sweep_interval_seconds=1,
+    )
+    stop = threading.Event()
+    worker = threading.Thread(target=run, args=(settings, stop), daemon=True)
+    worker.start()
+
+    def offline() -> bool:
+        row = conn.execute("SELECT status FROM devices").fetchone()
+        return row == ("offline",)
+
+    try:
+        wait_for(offline, timeout=60)
+    finally:
+        stop.set()
+        worker.join(timeout=30)
+    rules = conn.execute("SELECT rule FROM alerts WHERE resolved_at IS NULL").fetchall()
+    assert ("offline",) in rules

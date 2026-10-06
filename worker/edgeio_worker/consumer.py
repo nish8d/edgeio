@@ -16,11 +16,14 @@ from edgeio_contracts.validation import ContractError, validate_report
 
 from .config import WorkerSettings
 from .db import Database
-from .dlq import build_dlq_record
+from .dlq import DeliveryTracker, build_dlq_record
+from .lag import consumer_lag
 from .store import process_report, store_batch
 from .sweeper import sweep_offline
 
 log = logging.getLogger(__name__)
+
+LAG_RECHECK_SECONDS = 5.0
 
 
 def run(settings: WorkerSettings, stop: threading.Event) -> None:
@@ -32,8 +35,14 @@ def run(settings: WorkerSettings, stop: threading.Event) -> None:
             "auto.offset.reset": "earliest",
         }
     )
+    deliveries = DeliveryTracker()
     producer = Producer(
-        {"bootstrap.servers": settings.kafka_bootstrap, "enable.idempotence": True, "acks": "all"}
+        {
+            "bootstrap.servers": settings.kafka_bootstrap,
+            "enable.idempotence": True,
+            "acks": "all",
+            "on_delivery": deliveries,
+        }
     )
     db = Database.from_url(settings.database_url, stop)
     offline_after = timedelta(seconds=settings.offline_after_seconds)
@@ -46,16 +55,21 @@ def run(settings: WorkerSettings, stop: threading.Event) -> None:
                 num_messages=settings.batch_size, timeout=settings.poll_timeout_seconds
             )
             if messages:
-                handle_batch(messages, settings, producer, db)
+                handle_batch(messages, settings, producer, db, deliveries)
                 # Only after the DB transaction committed: at-least-once delivery.
                 consumer.commit(asynchronous=False)
             if time.monotonic() >= next_sweep:
-                offline = db.run_in_transaction(
-                    lambda conn: sweep_offline(conn, datetime.now(UTC), offline_after)
-                )
-                if offline:
-                    log.warning("devices went offline", extra={"device_ids": offline})
-                next_sweep = time.monotonic() + settings.sweep_interval_seconds
+                # last_seen is only trustworthy once we've caught up with the topic; sweeping
+                # while behind (startup, after an outage) would flag the whole fleet offline.
+                if consumer_lag(consumer) == 0:
+                    offline = db.run_in_transaction(
+                        lambda conn: sweep_offline(conn, datetime.now(UTC), offline_after)
+                    )
+                    if offline:
+                        log.warning("devices went offline", extra={"device_ids": offline})
+                    next_sweep = time.monotonic() + settings.sweep_interval_seconds
+                else:
+                    next_sweep = time.monotonic() + LAG_RECHECK_SECONDS
     finally:
         consumer.close()
         producer.flush(10)
@@ -64,7 +78,11 @@ def run(settings: WorkerSettings, stop: threading.Event) -> None:
 
 
 def handle_batch(
-    messages: Sequence[Any], settings: WorkerSettings, producer: Any, db: Database
+    messages: Sequence[Any],
+    settings: WorkerSettings,
+    producer: Any,
+    db: Database,
+    deliveries: DeliveryTracker,
 ) -> None:
     now = datetime.now(UTC)
     accepted: list[tuple[Any, HealthReport]] = []
@@ -91,8 +109,10 @@ def handle_batch(
         log.exception("batch failed to store; isolating reports")
         rejected += _store_individually(accepted, settings, producer, db, now)
 
-    if rejected and producer.flush(10) > 0:
-        raise RuntimeError("dead-letter messages not delivered; refusing to commit offsets")
+    if rejected:
+        if producer.flush(10) > 0:
+            raise RuntimeError("dead-letter messages not delivered; refusing to commit offsets")
+        deliveries.raise_if_failed()
     log.info("batch processed", extra={"stored": len(reports), "rejected": rejected})
 
 
