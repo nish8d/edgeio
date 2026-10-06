@@ -101,5 +101,37 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  api:
+    image: edgeio/api:dev
+    build:
+      context: .
+      dockerfile: docker/python.Dockerfile
+      args:
+        PACKAGE: edgeio-api
+    command: ["python", "-m", "edgeio_api"]
+    environment:
+      DATABASE_URL: postgresql://edgeio:edgeio@timescaledb:5432/edgeio
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  dashboard:
+    image: edgeio/dashboard:dev
+    build: ./dashboard
+    ports:
+      - "${DASHBOARD_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   timescale-data:

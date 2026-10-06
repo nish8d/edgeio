@@ -168,7 +168,7 @@ Plain ordered SQL files (`0001_init.sql`, …), applied idempotently at startup 
 - `health_readings` — **hypertable** on `ts`; unique `(device_id, ts)`; flattened columns for all numeric metrics + derived fields; `raw JSONB` with the full original payload.
 - `service_status` — latest state per `(device_id, service)` with `changed_at`.
 - `alerts` — `id`, `device_id`, `rule`, `severity` (`warning|critical`), `opened_at`, `resolved_at` (null = open), `last_value`, `message`. Partial unique index guarantees **at most one open alert per (device_id, rule)**.
-- Continuous aggregates: `health_hourly`, `health_daily` (avg/max CPU, avg/max temp, avg RAM %, max disk %, avg packet loss, reading count).
+- Continuous aggregates: `health_hourly`, `health_daily` — avg + max of CPU, temperature, RAM %, disk %, packet loss and rx/tx rate (bits/s), plus reading count (migration `0003` added the max/rate columns). Real-time aggregation is on (`materialized_only = false`).
 - Retention: raw `health_readings` 30 days; `health_hourly` 1 year; `health_daily` kept.
 
 ## 9. Alert rules
@@ -191,12 +191,12 @@ Device `status` = `offline` if offline, else worst open alert severity, else `he
 
 FastAPI, read-only, prefix `/api/v1`, Pydantic response models, OpenAPI docs at `/docs`.
 
-- `GET /devices?status=&limit=&offset=` — list with latest status/metrics.
-- `GET /devices/{device_id}` — latest reading, services, containers, open alerts.
-- `GET /devices/{device_id}/metrics?metric=&from=&to=&bucket=` — time series; auto-selects source: raw (≤ 24 h), `health_hourly` (≤ 30 d), `health_daily` beyond.
-- `GET /alerts?state=open|resolved&device_id=&severity=` — paginated.
-- `GET /fleet/summary` — counts per status, top-N hottest / fullest-disk devices, open alert counts.
-- `GET /healthz` — liveness + DB connectivity.
+- `GET /devices?status=&limit=&offset=` — list with latest status/metrics and open-alert count, ordered by hostname.
+- `GET /devices/{device_id}` — latest metrics, services, latest reading (load, containers, rates), open alerts. Non-IP id → 422, unknown → 404.
+- `GET /devices/{device_id}/metrics?metric=&from=&to=&bucket=` — `metric` ∈ cpu, temperature, ram, disk, packet_loss, rx_rate, tx_rate; `from`/`to` ISO-8601 (default last 24 h; naive = UTC); `bucket` ∈ raw, 1h, 1d, auto-selected when omitted: raw (≤ 24 h), `health_hourly` (≤ 30 d), `health_daily` beyond. Points carry `value` (avg for rollups) and `max`.
+- `GET /alerts?state=open|resolved|all&device_id=&severity=` — paginated, newest first; default `open`.
+- `GET /fleet/summary?top=5` — counts per status, open alert counts by severity, top-N hottest / fullest-disk devices (offline devices excluded).
+- `GET /healthz` — 200 `{status: ok}` or 503 `{status: degraded}`. Any endpoint answers 503 `{"detail": "database unavailable"}` when the DB is down.
 
 CORS allows the dashboard dev origin. The API never talks to Kafka.
 
@@ -204,28 +204,33 @@ CORS allows the dashboard dev origin. The API never talks to Kafka.
 
 React + Vite + TypeScript. TanStack Query (refetch every 30 s), Recharts, React Router. API types generated from the FastAPI OpenAPI schema (`openapi-typescript`) — don't hand-write API types.
 
+In Compose, nginx serves the built dashboard on `DASHBOARD_PORT` (default 5173) and proxies `/api` to the API. For development run `make dev-api` and `make dev-dashboard` (Vite on 5173, proxying `/api` to :8000) — stop the Compose dashboard first or set `DASHBOARD_PORT`. After changing API response models run `make openapi` to refresh `dashboard/openapi.json` and the generated types.
+
 - **Fleet overview** — status tiles (healthy/warning/critical/offline), grid of 50 device cards colored by status, filter by status.
 - **Device detail** — header (hostname, IP, OS, uptime), time-series charts (CPU, temp, RAM, disk, network rate, packet loss) with range picker, services/containers panel, alert history.
 - **Alerts** — open and resolved alerts table, filterable.
 
 ## 12. Commands
 
-(Keep this section in sync with the Makefile. `make test` = unit tests only; `make test-int` needs Docker.)
+(Keep this section in sync with the Makefile. `make test-int` needs Docker.)
 
 ```
 make up          # docker compose up -d --build (full stack)
 make down        # stop stack
 make logs s=worker   # tail a service's logs
-make test        # all unit + API tests
-make test-int    # integration tests (Testcontainers; needs Docker)
-make lint        # ruff + mypy + eslint/tsc
+make test        # Python unit tests + dashboard Vitest
+make test-int    # integration tests incl. API (Testcontainers; needs Docker)
+make lint        # ruff + mypy + eslint/prettier/tsc
 make fmt         # ruff format + prettier
 make psql        # psql shell into timescaledb
 make topics      # list topics / consumer lag
 make schema      # regenerate contracts/health.schema.json from the Pydantic model
+make openapi     # regenerate dashboard/openapi.json + TS types from the API
+make dev-api     # run the API locally on :8000
+make dev-dashboard  # Vite dev server on :5173
 ```
 
-Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-network), Timescale `5433` on the host (override with `TIMESCALE_PORT`; 5432 is often taken by a local Postgres) / `timescaledb:5432` in-network.
+Ports: dashboard `5173` (`DASHBOARD_PORT`), API `8000`, Kafka `9092` (host) / `kafka:29092` (in-network), Timescale `5433` on the host (override with `TIMESCALE_PORT`; 5432 is often taken by a local Postgres) / `timescaledb:5432` in-network.
 
 ## 13. Testing
 
@@ -247,4 +252,4 @@ Ports: dashboard `5173`, API `8000`, Kafka `9092` (host) / `kafka:29092` (in-net
 
 ## 15. Build status
 
-Design approved 2026-10-06. Plan 1 (pipeline: contracts, simulator, worker, TimescaleDB, Compose) implemented — see `docs/superpowers/plans/2026-10-06-edgeio-pipeline.md`. Next: Plan 2 — REST API (§10) and dashboard (§11).
+Design approved 2026-10-06. Plan 1 (pipeline) and Plan 2 (REST API + dashboard) implemented — see `docs/superpowers/plans/`. The platform is feature-complete for the simulated fleet; next steps are real devices running `health.py` against the `device.health` contract.

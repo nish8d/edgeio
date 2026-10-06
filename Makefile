@@ -11,6 +11,7 @@ logs:
 
 test:
 	uv run pytest
+	npm --prefix dashboard test
 
 test-int:
 	uv run pytest tests/integration
@@ -19,10 +20,12 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api
+	npm --prefix dashboard run lint
 
 fmt:
 	uv run ruff format .
 	uv run ruff check --fix .
+	npm --prefix dashboard run format
 
 psql:
 	docker compose exec timescaledb psql -U edgeio -d edgeio
