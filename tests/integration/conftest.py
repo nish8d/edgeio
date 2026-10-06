@@ -5,10 +5,13 @@ from typing import Any
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from psycopg import sql
 from testcontainers.community.kafka import KafkaContainer
 from testcontainers.community.postgres import PostgresContainer
 
+from edgeio_api.app import create_app
+from edgeio_api.config import ApiSettings
 from edgeio_contracts.models import HealthReport
 from edgeio_contracts.samples import sample_report
 from edgeio_worker.migrate import apply_migrations
@@ -68,3 +71,9 @@ def report_at() -> Callable[..., HealthReport]:
 def kafka_bootstrap() -> Iterator[str]:
     with KafkaContainer().with_kraft() as kafka:
         yield kafka.get_bootstrap_server()
+
+
+@pytest.fixture
+def api(database_url: str) -> Iterator[TestClient]:
+    with TestClient(create_app(ApiSettings(database_url=database_url))) as client:
+        yield client

@@ -18,7 +18,7 @@ test-int:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker
+	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api
 
 fmt:
 	uv run ruff format .
