@@ -11,6 +11,7 @@
 #   ~/edgehealth/src/       the agent source the image is built from
 #   ~/edgehealth/agent.env  this device's settings (kept across upgrades)
 #   ~/edgehealth/VERSION    the installed git revision
+#   ~/edgehealth/build.log  output of the last image build
 # Unsent readings are kept in the Docker volume edgeio-agent-spool.
 #
 # Upgrade:   git pull && ./setup.sh
@@ -166,7 +167,14 @@ mv "$INSTALL_DIR/src.new" "$INSTALL_DIR/src"
 echo "$version" > "$INSTALL_DIR/VERSION"
 
 say "Building image $IMAGE:$version (the first build downloads the base image)"
-docker build --quiet -t "$IMAGE:$version" -t "$IMAGE:latest" "$INSTALL_DIR/src" >/dev/null
+# Build on the host network: Docker's default build network often can't use the device's DNS
+# (systemd-resolved on 127.0.0.53, Tailscale's 100.100.100.100), so downloads would fail.
+build_log="$INSTALL_DIR/build.log"
+if ! docker build --network host -t "$IMAGE:$version" -t "$IMAGE:latest" "$INSTALL_DIR/src" \
+        >"$build_log" 2>&1; then
+    tail -n 25 "$build_log" >&2
+    die "image build failed (full log: $build_log). The device needs internet access to Docker Hub, ghcr.io, PyPI and deb.debian.org"
+fi
 
 # --- run -------------------------------------------------------------------------------------
 
