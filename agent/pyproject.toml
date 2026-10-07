@@ -1,0 +1,19 @@
+[project]
+name = "edgeio-agent"
+version = "0.1.0"
+description = "Health agent for real edge devices: reads the host, publishes device.health over Tailscale"
+requires-python = ">=3.12"
+dependencies = [
+    "edgeio-contracts",
+    "confluent-kafka>=2.5",
+    "psutil>=5.9",
+    "pydantic-settings>=2.4",
+    "python-json-logger>=3.1",
+]
+
+[tool.uv.sources]
+edgeio-contracts = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
