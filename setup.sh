@@ -2,7 +2,10 @@
 # Install, upgrade or remove the edge health agent on this device.
 #
 #   git clone -b devicehealth https://github.com/nish8d/edgeio.git edgehealth-src
-#   cd edgehealth-src && ./setup.sh --server <server-tailscale-ip>:9094 --streamer <container>
+#   cd edgehealth-src && ./setup.sh --server <server-tailscale-ip>:9094
+#
+# Every container on the device is reported under its own name, plus the docker and
+# tailscaled host services. --streamer / --rename only change the names some are reported as.
 #
 # Everything installed lives in ~/edgehealth (override with EDGEHEALTH_DIR):
 #   ~/edgehealth/src/       the agent source the image is built from
@@ -32,8 +35,11 @@ Usage: ./setup.sh [--server HOST:PORT] [--streamer CONTAINER] [--rename NAME=KEY
 
   --server HOST:PORT     Kafka TAILNET listener of the edgeio server (e.g. 100.x.y.z:9094).
                          Required on first install; remembered afterwards.
-  --streamer CONTAINER   The container reported as the edge_streamer service.
-  --rename NAME=KEY      Report container NAME under service key KEY (repeatable).
+  --streamer CONTAINER   Optional. Report this container as "edge_streamer" instead of its name.
+  --rename NAME=KEY      Optional. Report container NAME under service key KEY (repeatable).
+
+Every container on the device is reported as a service under its own name; the options
+above only rename some of them.
   --uninstall            Stop and remove the agent container and image.
   --purge                With --uninstall: also delete settings and unsent readings.
 
@@ -131,11 +137,6 @@ bootstrap="$(get_key KAFKA_BOOTSTRAP)"
 [[ -n "$bootstrap" ]] || die "no server configured; pass --server HOST:PORT"
 [[ "$bootstrap" == *:* ]] || die "KAFKA_BOOTSTRAP '$bootstrap' must be HOST:PORT"
 
-if [[ -z "$streamer" && ${#renames[@]} -eq 0 && -z "$(get_key AGENT_SERVICE_RENAMES)" && -t 0 ]]; then
-    echo "Containers on this device:"
-    docker ps -a --format '  {{.Names}}  ({{.Status}})'
-    read -rp "Which container is the edge streamer? (Enter to skip): " streamer
-fi
 [[ -n "$streamer" ]] && renames=("$streamer=edge_streamer" "${renames[@]}")
 if [[ ${#renames[@]} -gt 0 ]]; then
     set_key AGENT_SERVICE_RENAMES "$(IFS=,; echo "${renames[*]}")"
