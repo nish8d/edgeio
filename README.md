@@ -86,13 +86,31 @@ The dev servers bind the same ports as the Compose stack. To run them alongside 
 ```
 contracts/          Wire format: Pydantic models, JSON Schema, example payloads
 simulator/          Virtual device fleet → Kafka
+agent/              Health agent for real edge devices → Kafka over Tailscale
 worker/             Kafka consumer: validate → transform → store → alert; DB migrator
 api/                FastAPI read API over TimescaleDB
 dashboard/          React + Vite + TypeScript dashboard (served by nginx in Compose)
 db/migrations/      Ordered SQL migrations, applied at startup
 tests/integration/  Cross-service tests with Testcontainers
-docker/             Shared Python service Dockerfile
+docker/             Python service and agent Dockerfiles
+deploy/agent/       Running the agent on a device
 ```
+
+## Running on a real device
+
+The simulator stands in for real devices. `agent/` is the real thing: a small container that reads the host it runs on and publishes the same `device.health` contract to Kafka over Tailscale.
+- **What it reports:**
+  - CPU, temperature, RAM and disk;
+  - uplink traffic and internet packet loss;
+  - host services, and every Docker container as a service.
+- **Delivery:** readings are spooled on disk while Kafka is unreachable and sent when it's back.
+
+```bash
+make up-tailnet     # stack + Kafka listener on this machine's Tailscale IP (:9094)
+make agent-image    # build edgeio/agent:dev, then ship and run it per deploy/agent/README.md
+```
+
+The device appears on the dashboard under its Tailscale IP next to the simulated fleet.
 
 ## The message contract
 
@@ -137,7 +155,7 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on 
 - **Python:** lint, mypy, unit tests, and a check that the generated schema and OpenAPI files are up to date.
 - **Integration:** the integration tests, run with Testcontainers.
 - **Dashboard:** lint, tests and the production build.
-- **Docker:** builds every image in the Compose stack.
+- **Docker:** builds every image in the Compose stack, plus the agent image.
 
 ## Tech stack
 

@@ -1,5 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
+import psycopg
 import pytest
 
+from edgeio_contracts.samples import sample_report
 from edgeio_worker.store import process_report
 
 EXPECTED = {
@@ -25,3 +29,34 @@ def test_hourly_rollup_aggregates_network_rates(conn, report_at, refresh_rollups
         "SELECT reading_count, rx_rate_avg, rx_rate_max FROM health_hourly"
     ).fetchone()
     assert row == (2, 80_000.0, 80_000.0)
+
+
+def _refresh_job(conn: psycopg.Connection, view: str) -> int:
+    row = conn.execute(
+        "SELECT j.job_id FROM timescaledb_information.jobs j"
+        " JOIN timescaledb_information.continuous_aggregates c"
+        "   ON j.hypertable_name = c.materialization_hypertable_name"
+        " WHERE c.view_name = %s AND j.proc_name = 'policy_refresh_continuous_aggregate'",
+        (view,),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_hourly_policy_picks_up_readings_delivered_days_late(conn: psycopg.Connection) -> None:
+    # An agent's spool can deliver a week-old backlog after an outage. The scheduled refresh
+    # must still materialize those buckets, or long-range charts keep a permanent hole.
+    now = datetime.now(UTC).replace(microsecond=0)
+    job = _refresh_job(conn, "health_hourly")
+    process_report(conn, sample_report({"timestamp": (now - timedelta(hours=2)).isoformat()}))
+    conn.execute("CALL run_job(%s)", (job,))  # live data moves the watermark to ~now
+
+    two_days_ago = now - timedelta(days=2)
+    process_report(conn, sample_report({"timestamp": two_days_ago.isoformat()}))  # backlog
+    conn.execute("CALL run_job(%s)", (job,))
+
+    count = conn.execute(
+        "SELECT count(*) FROM health_hourly WHERE bucket = time_bucket('1 hour', %s::timestamptz)",
+        (two_days_ago,),
+    ).fetchone()
+    assert count == (1,)

@@ -1,0 +1,10 @@
+# Opt-in: also accept producers (real edge agents) on this machine's Tailscale address.
+# Use `make up-tailnet`, which sets TAILSCALE_IP from `tailscale ip -4`.
+services:
+  kafka:
+    ports:
+      - "${TAILSCALE_IP:?set TAILSCALE_IP}:9094:9094"
+    environment:
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,TAILNET://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092,TAILNET://${TAILSCALE_IP:?set TAILSCALE_IP}:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,TAILNET:PLAINTEXT,CONTROLLER:PLAINTEXT

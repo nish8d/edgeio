@@ -54,11 +54,13 @@ edgeio/
     edgeio_contracts/   #   Pydantic models used by simulator, worker, api
     fixtures/valid/     #   example payloads (invalid cases are generated in tests)
   simulator/            # Virtual device fleet → Kafka
+  agent/                # Health agent for real edge devices (Docker image) → Kafka over Tailscale
   worker/               # Kafka consumer: validate → transform → store → alert
   api/                  # FastAPI read API over TimescaleDB
   dashboard/            # React + Vite + TS
   db/migrations/        # Ordered SQL migrations (plain .sql, applied at startup)
   tests/integration/    # Cross-service tests with Testcontainers
+  deploy/agent/         # How to run the agent on a device (env example, docker run)
   docker-compose.yml
   Makefile
   CLAUDE.md
@@ -117,6 +119,8 @@ Wire format = the JSON below, plus `schema_version`. Keys are snake_case. Timest
 - Service values ∈ `{"running", "stopped", "failed", "unknown"}`. The service *keys* are an open map (devices may report extra services); `docker`, `postgresql`, `edge_streamer` are expected.
 - Unknown top-level fields: reject (strict) — contract changes must bump `schema_version`.
 
+**Disk convention:** `root_free_gb` is the space available to unprivileged processes; filesystem-reserved blocks count as used (`used = total − free`). This keeps the 1 GB sum rule exact on ext4 (which reserves ~5 % for root) and makes `disk_usage_high` fire on space applications can actually use.
+
 **Changing the contract:** update `health.schema.json` and the Pydantic models together, add fixtures for valid/invalid cases, bump `schema_version` for breaking changes, and keep the worker accepting the previous version until explicitly dropped.
 
 ## 5. Kafka
@@ -126,7 +130,7 @@ Wire format = the JSON below, plus `schema_version`. Keys are snake_case. Timest
 | `device.health` | 6 | `device_id` | Health readings (per-device ordering preserved) |
 | `device.health.dlq` | 1 | `device_id` or null | Rejected messages: original bytes + headers `error`, `error_stage`, `failed_at` |
 
-Topics are created explicitly by an init container (auto-create disabled). Consumer group: `edgeio-worker`. Producer: `acks=all`, idempotence enabled.
+Real agents reach Kafka through an opt-in third listener, `TAILNET`, on `<server tailscale ip>:9094` (`docker-compose.tailscale.yml`, `make up-tailnet`); the default stack listens on localhost only. Topics are created explicitly by an init container (auto-create disabled). Consumer group: `edgeio-worker`. Producer: `acks=all`, idempotence enabled.
 
 ## 6. Simulator (`simulator/`)
 
@@ -145,6 +149,25 @@ Stands in for `health.py` on each device. Publishes **directly to Kafka** (no in
 - **Scheduling:** each device publishes every `SIM_INTERVAL_SECONDS` (default `300`) with a random initial jitter so the fleet doesn't publish in lockstep.
 - Config via env: `KAFKA_BOOTSTRAP`, `SIM_DEVICE_COUNT` (50), `SIM_DEVICE_OFFSET` (0, for sharding replicas), `SIM_SEED`, `SIM_INTERVAL_SECONDS`, `SIM_MALFORMED_RATE`, `SIM_FAULT_RATE`.
 - Device model logic must be **pure and testable** (state + rng in → new state + payload out); the asyncio/Kafka layer is a thin shell around it.
+
+## 6b. Edge agent (`agent/`)
+
+Runs on a real device instead of the simulator and publishes the same v1 contract. It's a Docker image (`docker/agent.Dockerfile`, `make agent-image`), run with `--network host --pid host --uts host` and read-only mounts of `/` (→ `/host`), `/sys/fs/cgroup` (→ `/host-cgroup`) and the Docker socket, plus a named volume for the spool. See `deploy/agent/README.md`.
+
+- **Functional core, imperative shell.** `host.py` / `containers.py` / `ping.py` are pure readers over paths or text. `report.py` turns a `HostSnapshot` into a validated `HealthReport`. `collect.py` is the only module that touches the live machine.
+- **Field sources:**
+  - `device_id`: the IPv4 address in 100.64.0.0/10, preferring `tailscale0`.
+  - CPU temperature: hwmon, in the order `k10temp` → `coretemp` → `zenpower` → `cpu_thermal`, else the hottest sensor.
+  - Disk: `statvfs` of the host root (see the §4 disk convention).
+  - Interface: the default-route interface from `/proc/net/route`.
+  - Packet loss: the **minimum** loss across `AGENT_PING_TARGETS` (internet reachability, not the Tailscale link).
+- **Services:**
+  - Host units (`AGENT_HOST_SERVICES`) are `running` if their cgroup v2 `cgroup.procs` lists a process, otherwise `stopped`.
+  - Every container comes from the Docker API: running → running; exit 0, created or paused → stopped; non-zero exit, restarting or dead → failed.
+  - `AGENT_SERVICE_RENAMES` maps container names to contract keys (e.g. the streamer → `edge_streamer`).
+  - If the Docker API is unreachable, `docker` is `unknown`.
+- **Delivery:** each tick validates the payload locally (`validate_report`) and writes it atomically to the spool. It then sends every pending file oldest first, deleting a file only after the broker acks it. The spool is capped at `AGENT_SPOOL_MAX_FILES` (7 days), oldest dropped. A failed collection skips the reading but still drains the backlog.
+- **Never commit customer identifiers** (container names, registries, hostnames, IPs). Per-device settings live in the device's env file.
 
 ## 7. Stream worker (`worker/`)
 
@@ -169,6 +192,7 @@ Plain ordered SQL files (`0001_init.sql`, …), applied idempotently at startup 
 - `service_status` — latest state per `(device_id, service)` with `changed_at`.
 - `alerts` — `id`, `device_id`, `rule`, `severity` (`warning|critical`), `opened_at`, `resolved_at` (null = open), `last_value`, `message`. Partial unique index guarantees **at most one open alert per (device_id, rule)**.
 - Continuous aggregates: `health_hourly`, `health_daily` — avg + max of CPU, temperature, RAM %, disk %, packet loss and rx/tx rate (bits/s), plus reading count (migration `0003` added the max/rate columns). Real-time aggregation is on (`materialized_only = false`).
+- Refresh policies re-materialize the last 8 days (hourly) / 10 days (daily) so late readings from an agent's spool (≤ 7 days) reach the rollups (`0005`).
 - Retention: raw `health_readings` 30 days; `health_hourly` 1 year; `health_daily` kept.
 
 ## 9. Alert rules
@@ -227,6 +251,8 @@ make topics      # list topics / consumer lag
 make schema      # regenerate contracts/health.schema.json from the Pydantic model
 make openapi     # regenerate dashboard/openapi.json + TS types from the API
 make dev-api     # run the API locally on :8000
+make up-tailnet  # full stack + Kafka listener on this machine's Tailscale IP :9094
+make agent-image # build the edge agent image (edgeio/agent:dev)
 make dev-dashboard  # Vite dev server on :5173
 ```
 
@@ -252,4 +278,4 @@ Ports: dashboard `5173` (`DASHBOARD_PORT`), API `8000`, Kafka `9092` (host) / `k
 
 ## 15. Build status
 
-Design approved 2026-10-06. Plan 1 (pipeline) and Plan 2 (REST API + dashboard) implemented — see `docs/superpowers/plans/`. The platform is feature-complete for the simulated fleet; next steps are real devices running `health.py` against the `device.health` contract.
+Design approved 2026-10-06. Plan 1 (pipeline), Plan 2 (REST API + dashboard) and Plan 3 (edge agent for real devices) implemented — see `docs/superpowers/plans/`. Real devices run the agent from `agent/` against the same `device.health` contract, alongside (or instead of) the simulated fleet.

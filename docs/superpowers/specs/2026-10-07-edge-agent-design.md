@@ -48,7 +48,7 @@ docker / systemd / ping probes (thin I/O)       ─┘                          
 | `cpu_usage_percent` | `psutil.cpu_percent(interval=1)`. |
 | `load_1m` | `os.getloadavg()[0]`. |
 | RAM | `psutil.virtual_memory()`: total and used in MB. The percent is computed from used/total to keep the fields consistent. |
-| `cpu_temperature_c` | The first hwmon chip present in the order `k10temp` → `coretemp` → `zenpower` → `cpu_thermal`/thermal_zone, using the package/Tctl label where available. If none is present it falls back to the hottest sensor, and is clamped to the contract's [−40, 125]. |
+| `cpu_temperature_c` | The first hwmon chip present in the order `k10temp` → `coretemp` → `zenpower` → `cpu_thermal`/thermal_zone, using the package/Tctl label where available. If none is present it falls back to the hottest sensor, and is clamped to the contract's [−40, 125]. If there's no sensor at all, the reading is skipped with an error log, because the v1 contract requires a temperature. |
 | Disk | `os.statvfs(<host root>)`: `total = f_blocks·f_frsize`, `free = f_bavail·f_frsize` (space usable by normal processes), `used = total − free`, `percent = used / total`. Reserved blocks therefore count as used. The sum is exact, and alerts fire on the space applications can actually use. |
 | `interface` | The default-route interface from the host's `/proc/net/route` (the lowest metric, destination `00000000`). |
 | `rx_bytes` / `tx_bytes` | `psutil.net_io_counters(pernic=True)[interface]`. These are monotonic and reset on reboot, which matches the worker's rate derivation. |
@@ -62,7 +62,7 @@ docker / systemd / ping probes (thin I/O)       ─┘                          
 - The spool is a directory on a named volume holding one file per reading, named by timestamp. Each tick:
   1. Build and validate the new report.
   2. Write it to the spool, atomically (temp file, then rename).
-  3. Send spooled files oldest first. Delete each one only after its delivery report succeeds. Stop at the first failure.
+  3. Send every spooled file, oldest first, in one flush. Delete each one only after its delivery report succeeds; failed ones stay for the next tick. Unreadable or invalid spool files are discarded with a warning so they can't block the queue.
 - The spool is capped at `AGENT_SPOOL_MAX_FILES` (default 2016, which is 7 days at 300 s). When over the cap, the oldest files are dropped with a warning.
 - Late readings are fine downstream. The worker stores readings older than `last_seen` as history without rewinding device state, and the `ON CONFLICT DO NOTHING` key makes redelivery harmless.
 
@@ -75,13 +75,14 @@ docker / systemd / ping probes (thin I/O)       ─┘                          
 ```
 docker run -d --name edgeio-agent --restart=always \
   --network host --pid host --uts host \
+  --log-opt max-size=10m --log-opt max-file=3 \
   -v /:/host:ro -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /sys/fs/cgroup:/host-cgroup:ro \
   -v edgeio-agent-spool:/spool \
-  --env-file /etc/edgeio-agent.env edgeio/agent
+  --env-file ~/edgeio-agent.env edgeio/agent:dev
 ```
 
-  The env file holds `KAFKA_BOOTSTRAP`, `AGENT_SERVICE_RENAMES` and any per-device overrides. It lives on the device, not in the repo.
+  The env file (in the user's home, since there's no sudo) holds `KAFKA_BOOTSTRAP`, `AGENT_SERVICE_RENAMES` and any per-device overrides. It lives on the device, not in the repo.
 - Security trade-off, accepted: access to the Docker socket is root-equivalent even when mounted read-only. The agent only issues GET requests, and the reference device already runs a privileged watchdog container.
 - On the server side, an opt-in `docker-compose.tailscale.yml` adds a Kafka listener `TAILNET://0.0.0.0:9094`. It is advertised as `${TAILSCALE_IP}:9094` and published only on `${TAILSCALE_IP}:9094`. The listener map is extended to cover it. `make up-tailnet` uses it. Plain `make up` stays localhost-only.
 

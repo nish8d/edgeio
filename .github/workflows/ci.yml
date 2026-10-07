@@ -28,7 +28,7 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
       - name: Mypy
-        run: uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api
+        run: uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api agent/edgeio_agent
       - name: Unit tests
         run: uv run pytest
       - name: Generated files are up to date
@@ -84,3 +84,5 @@ jobs:
         run: docker compose config --quiet
       - name: Build images
         run: docker compose build
+      - name: Build agent image
+        run: docker build -f docker/agent.Dockerfile -t edgeio/agent:ci .

@@ -1,7 +1,13 @@
-.PHONY: up down logs test test-int lint fmt psql topics schema openapi dev-api dev-dashboard
+.PHONY: up up-tailnet agent-image down logs test test-int lint fmt psql topics schema openapi dev-api dev-dashboard
 
 up:
 	docker compose up -d --build
+
+up-tailnet:
+	TAILSCALE_IP=$$(tailscale ip -4) docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d --build
+
+agent-image:
+	docker build -f docker/agent.Dockerfile -t edgeio/agent:dev .
 
 down:
 	docker compose down
@@ -19,7 +25,7 @@ test-int:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api
+	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api agent/edgeio_agent
 	npm --prefix dashboard run lint
 
 fmt:
