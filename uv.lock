@@ -12,7 +12,6 @@ members = [
     "edgeio-agent",
     "edgeio-api",
     "edgeio-contracts",
-    "edgeio-simulator",
     "edgeio-worker",
 ]
 
@@ -323,7 +322,6 @@ dependencies = [
     { name = "edgeio-agent" },
     { name = "edgeio-api" },
     { name = "edgeio-contracts" },
-    { name = "edgeio-simulator" },
     { name = "edgeio-worker" },
 ]
 
@@ -343,7 +341,6 @@ requires-dist = [
     { name = "edgeio-agent", editable = "agent" },
     { name = "edgeio-api", editable = "api" },
     { name = "edgeio-contracts", editable = "contracts" },
-    { name = "edgeio-simulator", editable = "simulator" },
     { name = "edgeio-worker", editable = "worker" },
 ]
 
@@ -412,25 +409,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2.8" }]
-
-[[package]]
-name = "edgeio-simulator"
-version = "0.1.0"
-source = { editable = "simulator" }
-dependencies = [
-    { name = "confluent-kafka" },
-    { name = "edgeio-contracts" },
-    { name = "pydantic-settings" },
-    { name = "python-json-logger" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "confluent-kafka", specifier = ">=2.5" },
-    { name = "edgeio-contracts", editable = "contracts" },
-    { name = "pydantic-settings", specifier = ">=2.4" },
-    { name = "python-json-logger", specifier = ">=3.1" },
-]
 
 [[package]]
 name = "edgeio-worker"

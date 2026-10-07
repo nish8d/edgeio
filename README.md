@@ -2,10 +2,10 @@
 
 [![CI](https://github.com/nish8d/edgeio/actions/workflows/ci.yml/badge.svg)](https://github.com/nish8d/edgeio/actions/workflows/ci.yml)
 
-A health monitoring platform for a fleet of edge devices. Fifty simulated devices report telemetry every five minutes over Kafka. A stream worker validates and stores the readings in TimescaleDB and raises alerts. A REST API and a React dashboard show live status, history and alerts.
+A health monitoring platform for a fleet of real edge devices. Each device runs a small agent container that reports telemetry every five minutes to Kafka over Tailscale. A stream worker validates and stores the readings in TimescaleDB and raises alerts. A REST API and a React dashboard show live status, history and alerts.
 
 ```
-Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
+Edge agents ──Tailscale, every 5 min──▶ Kafka (device.health)
                                             │
                                             ▼
                                   Stream worker: validate → transform → store → alert
@@ -17,11 +17,11 @@ Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
                                    REST API ──▶ Dashboard
 ```
 
-The simulator stands in for a real `health.py` agent that each device would run over Tailscale. Because of this, the device → Kafka message contract is the most important interface in the repo. It's strict, versioned and doesn't depend on the simulator.
+The device → Kafka message contract is the most important interface in the repo. It's strict and versioned, and nothing downstream depends on how a device produces it. The original portfolio version, built against a 50-device simulator, lives in [edgeiosim](https://github.com/nish8d/edgeiosim).
 
 ## Features
 
-- **Realistic simulated fleet.** Device state carries over between readings: uptime and network counters only grow, disks fill slowly, and CPU follows a daily curve. Devices randomly enter fault scenarios: overheat, disk fill, memory leak, packet loss, service or container crash, going offline, and reboot. A small fraction of messages are deliberately malformed to exercise the dead-letter path.
+- **Edge agent.** A container on each device reports CPU, temperature, RAM, disk, uplink traffic, internet packet loss, host services and every Docker container. Readings are spooled on disk while Kafka is unreachable and sent when it's back.
 - **Strict message contract.** Pydantic v2 models plus a generated JSON Schema (`contracts/health.schema.json`) for producers that aren't written in Python. `device_id` must be a Tailscale CGNAT address (`100.64.0.0/10`).
 - **Reliable stream worker:**
   - At-least-once delivery with idempotent inserts. Offsets are committed only after the database transaction commits.
@@ -52,7 +52,7 @@ make up
 | Kafka (host) | `localhost:9092` |
 | TimescaleDB (host) | `localhost:5433` (user/db `edgeio`) |
 
-Devices publish with random initial jitter at real-time intervals (every 5 minutes), so the fleet fills in over the first few minutes. Stop the stack with `make down`.
+The dashboard is empty until a device runs the agent (see [Running on a real device](#running-on-a-real-device)). Stop the stack with `make down`.
 
 Ports can be overridden with `DASHBOARD_PORT` and `TIMESCALE_PORT`.
 
@@ -85,7 +85,6 @@ The dev servers bind the same ports as the Compose stack. To run them alongside 
 
 ```
 contracts/          Wire format: Pydantic models, JSON Schema, example payloads
-simulator/          Virtual device fleet → Kafka
 agent/              Health agent for real edge devices → Kafka over Tailscale
 worker/             Kafka consumer: validate → transform → store → alert; DB migrator
 api/                FastAPI read API over TimescaleDB
@@ -94,11 +93,12 @@ db/migrations/      Ordered SQL migrations, applied at startup
 tests/integration/  Cross-service tests with Testcontainers
 docker/             Python service and agent Dockerfiles
 deploy/agent/       Running the agent on a device
+deploy/server/      Server .env template
 ```
 
 ## Running on a real device
 
-The simulator stands in for real devices. `agent/` is the real thing: a small container that reads the host it runs on and publishes the same `device.health` contract to Kafka over Tailscale.
+`agent/` is a small container that reads the host it runs on and publishes the same `device.health` contract to Kafka over Tailscale.
 - **What it reports:**
   - CPU, temperature, RAM and disk;
   - uplink traffic and internet packet loss;
@@ -110,7 +110,9 @@ make up-tailnet     # stack + Kafka listener on this machine's Tailscale IP (:90
 make agent-image    # build edgeio/agent:dev, then ship and run it per deploy/agent/README.md
 ```
 
-The device appears on the dashboard under its Tailscale IP next to the simulated fleet.
+The device appears on the dashboard under its hostname within one interval.
+
+On a server, copy `deploy/server/server.env.example` to `.env` next to `docker-compose.yml` first. It binds the database, API and the local Kafka port to `127.0.0.1`, puts the dashboard on the Tailscale IP, and sets a real database password.
 
 ## The message contract
 

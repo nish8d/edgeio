@@ -25,7 +25,7 @@ test-int:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy contracts/edgeio_contracts simulator/edgeio_simulator worker/edgeio_worker api/edgeio_api agent/edgeio_agent
+	uv run mypy contracts/edgeio_contracts worker/edgeio_worker api/edgeio_api agent/edgeio_agent
 	npm --prefix dashboard run lint
 
 fmt:

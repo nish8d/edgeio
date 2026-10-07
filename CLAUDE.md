@@ -4,10 +4,10 @@ This file is both the **design spec** and the **working guide** for this repo. R
 
 ## 1. Purpose
 
-A portfolio / learning project that simulates a fleet of ~50 edge devices reporting health telemetry, and builds a realistic data platform around it:
+A health monitoring platform for real edge devices. Each device runs the edge agent (`agent/`), which reports health telemetry over Tailscale into this data platform:
 
 ```
-Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
+Edge agents (Tailscale) ──JSON every 5 min──▶ Kafka (device.health)
                                             │
                                             ▼
                                   Stream worker: validate → transform → store → alert
@@ -19,15 +19,15 @@ Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
                                    REST API ──▶ Dashboard
 ```
 
-**Future direction:** real edge devices running a real `health.py` over Tailscale will eventually replace the simulator. Therefore the **device → Kafka message contract is the most important interface in the repo**: it must stay strict, versioned, and independent of simulator internals. Nothing downstream may depend on anything the simulator does that a real device wouldn't.
+**History:** the platform was built against a 50-device simulator. That portfolio version, simulator included, lives in the separate `edgeiosim` repo; this repo is the deployment project and carries real devices only. The **device → Kafka message contract is the most important interface in the repo**: it must stay strict, versioned, and independent of any one producer.
 
 **Success criteria**
-- `make up` (docker compose) brings up the full stack from a clean checkout.
-- All 50 simulated devices appear on the dashboard with live status, history charts, and alerts.
+- `make up` (docker compose) brings up the full stack from a clean checkout; `make up-tailnet` also accepts real agents over Tailscale.
+- Every device running the agent appears on the dashboard with live status, history charts, and alerts.
 - Invalid messages land in the DLQ, never crash the worker, never reach the DB.
 - Tests pass: unit, integration (Testcontainers), API, dashboard.
 
-**Non-goals (YAGNI):** auth/multi-tenancy, notifications (Slack/email), Kubernetes, ML anomaly detection, accelerated/backfilled simulation time, a schema registry. Don't add these without being asked.
+**Non-goals (YAGNI):** auth/multi-tenancy, notifications (Slack/email), Kubernetes, ML anomaly detection, a schema registry. Don't add these without being asked.
 
 ## 2. Decisions (already made — don't relitigate)
 
@@ -36,12 +36,12 @@ Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
 | Orchestration | Docker Compose, local only |
 | Broker | Kafka, single broker, **KRaft** mode (no ZooKeeper) |
 | Storage | PostgreSQL + **TimescaleDB** (hypertable + continuous aggregates + retention) |
-| Simulator | Python, **one process, 50 asyncio virtual devices** (can run multiple replicas with device-range sharding for N > 50) |
+| Device agent | Python in a Docker image on each device, producing directly to Kafka over Tailscale |
 | Stream worker | Python, plain `confluent-kafka` consumer, Pydantic validation, `psycopg` (v3) |
 | API | FastAPI, read-only |
 | Dashboard | React + Vite + TypeScript, TanStack Query, Recharts |
 | Alerting | Rule-based in the worker, stored in `alerts` table; no outbound notifications |
-| Simulation time | **Real time only.** Default interval 300 s. No acceleration, no backfill. |
+| Reporting interval | Real time. Default 300 s per device. |
 | Python tooling | `uv`, `ruff`, `mypy --strict`, `pytest` |
 | Delivery semantics | At-least-once + idempotent inserts |
 
@@ -51,9 +51,8 @@ Simulated devices ──JSON every 5 min──▶ Kafka (device.health)
 edgeio/
   contracts/            # Single source of truth for the wire format
     health.schema.json  #   JSON Schema (for real devices / non-Python producers)
-    edgeio_contracts/   #   Pydantic models used by simulator, worker, api
+    edgeio_contracts/   #   Pydantic models used by agent, worker, api
     fixtures/valid/     #   example payloads (invalid cases are generated in tests)
-  simulator/            # Virtual device fleet → Kafka
   agent/                # Health agent for real edge devices (Docker image) → Kafka over Tailscale
   worker/               # Kafka consumer: validate → transform → store → alert
   api/                  # FastAPI read API over TimescaleDB
@@ -130,29 +129,13 @@ Wire format = the JSON below, plus `schema_version`. Keys are snake_case. Timest
 | `device.health` | 6 | `device_id` | Health readings (per-device ordering preserved) |
 | `device.health.dlq` | 1 | `device_id` or null | Rejected messages: original bytes + headers `error`, `error_stage`, `failed_at` |
 
-Real agents reach Kafka through an opt-in third listener, `TAILNET`, on `<server tailscale ip>:9094` (`docker-compose.tailscale.yml`, `make up-tailnet`); the default stack listens on localhost only. Topics are created explicitly by an init container (auto-create disabled). Consumer group: `edgeio-worker`. Producer: `acks=all`, idempotence enabled.
+Real agents reach Kafka through an opt-in third listener, `TAILNET`, on `<server tailscale ip>:9094` (`docker-compose.tailscale.yml`, `make up-tailnet`). The `EXTERNAL` listener advertises `localhost:9092`, so only clients on the server itself can use it.
 
-## 6. Simulator (`simulator/`)
-
-Stands in for `health.py` on each device. Publishes **directly to Kafka** (no intermediate files).
-
-- **Fleet generation:** deterministic from `SIM_SEED`. Each device gets: Tailscale IP in `100.64.0.0/10`, hostname `edge-001`…`edge-050`, OS (mostly `Ubuntu 24.04`, some `Ubuntu 22.04`), RAM size (4/8/16/32 GB), disk size, interface (`eth0`/`wlan0`), baseline load profile.
-- **Stateful per device** (not independent random draws per tick):
-  - `uptime_seconds` increases monotonically; resets on simulated reboot.
-  - `rx_bytes`/`tx_bytes` are monotonic counters; reset only on reboot.
-  - Disk usage drifts slowly upward; occasional cleanup drops it.
-  - CPU follows a diurnal curve + noise; `load_1m` and temperature correlate with CPU.
-  - RAM noisy around a baseline; `ram_usage_percent` is computed from used/total (keep fields self-consistent).
-- **Fault scenarios** — small per-tick probability to start, last several ticks, then recover:
-  `overheat`, `disk_fill`, `memory_leak`, `packet_loss`, `service_crash` (a service → `failed`/`stopped`), `container_crash`, `offline` (device stops publishing), `reboot`.
-- **Malformed messages:** with probability `SIM_MALFORMED_RATE` (default `0.005`, `0` disables) emit an invalid payload to exercise the DLQ path.
-- **Scheduling:** each device publishes every `SIM_INTERVAL_SECONDS` (default `300`) with a random initial jitter so the fleet doesn't publish in lockstep.
-- Config via env: `KAFKA_BOOTSTRAP`, `SIM_DEVICE_COUNT` (50), `SIM_DEVICE_OFFSET` (0, for sharding replicas), `SIM_SEED`, `SIM_INTERVAL_SECONDS`, `SIM_MALFORMED_RATE`, `SIM_FAULT_RATE`.
-- Device model logic must be **pure and testable** (state + rng in → new state + payload out); the asyncio/Kafka layer is a thin shell around it.
+**Server deployment.** Published ports bind to `HOST_BIND` (Kafka 9092, Timescale, API; default `0.0.0.0`) and `DASHBOARD_BIND` (dashboard). The DB password comes from `POSTGRES_PASSWORD` (default `edgeio` for development). On a server, put these in a `.env` next to `docker-compose.yml` (template: `deploy/server/server.env.example`): `HOST_BIND=127.0.0.1`, `DASHBOARD_BIND` = the server's Tailscale IP, a random hex `POSTGRES_PASSWORD`, so only the dashboard and Kafka's TAILNET listener are reachable, and only over Tailscale. Ship runtime files only (no docs, tests or CLAUDE.md). Topics are created explicitly by an init container (auto-create disabled). The Kafka log lives on the `kafka-data` volume, so recreating the container keeps topics and unconsumed readings; every long-running service is `restart: unless-stopped`. Consumer group: `edgeio-worker`. Producer: `acks=all`, idempotence enabled.
 
 ## 6b. Edge agent (`agent/`)
 
-Runs on a real device instead of the simulator and publishes the same v1 contract. It's a Docker image (`docker/agent.Dockerfile`, `make agent-image`), run with `--network host --pid host --uts host` and read-only mounts of `/` (→ `/host`), `/sys/fs/cgroup` (→ `/host-cgroup`) and the Docker socket, plus a named volume for the spool. See `deploy/agent/README.md`.
+Runs on each real device and publishes the v1 contract. It's a Docker image (`docker/agent.Dockerfile`, `make agent-image`), run with `--network host --pid host --uts host` and read-only mounts of `/` (→ `/host`), `/sys/fs/cgroup` (→ `/host-cgroup`) and the Docker socket, plus a named volume for the spool. See `deploy/agent/README.md`.
 
 - **Functional core, imperative shell.** `host.py` / `containers.py` / `ping.py` are pure readers over paths or text. `report.py` turns a `HostSnapshot` into a validated `HealthReport`. `collect.py` is the only module that touches the live machine.
 - **Field sources:**
@@ -230,7 +213,7 @@ React + Vite + TypeScript. TanStack Query (refetch every 30 s), Recharts, React 
 
 In Compose, nginx serves the built dashboard on `DASHBOARD_PORT` (default 5173) and proxies `/api` to the API. For development run `make dev-api` and `make dev-dashboard` (Vite on 5173, proxying `/api` to :8000) — stop the Compose dashboard first or set `DASHBOARD_PORT`. After changing API response models run `make openapi` to refresh `dashboard/openapi.json` and the generated types.
 
-- **Fleet overview** — status tiles (healthy/warning/critical/offline), grid of 50 device cards colored by status, filter by status.
+- **Fleet overview** — status tiles (healthy/warning/critical/offline), grid of device cards colored by status, filter by status.
 - **Device detail** — header (hostname, IP, OS, uptime), time-series charts (CPU, temp, RAM, disk, network rate, packet loss) with range picker, services/containers panel, alert history.
 - **Alerts** — open and resolved alerts table, filterable.
 
@@ -261,7 +244,7 @@ Ports: dashboard `5173` (`DASHBOARD_PORT`), API `8000`, Kafka `9092` (host) / `k
 ## 13. Testing
 
 - **TDD** for logic: write the failing test first.
-- **Unit (pytest):** simulator state transitions (monotonic counters, uptime, fault lifecycles, payload always valid unless malformed injected); contract validation — valid example payloads in `contracts/fixtures/valid/`, invalid cases as a mutation table over `edgeio_contracts.samples.sample_payload()`; transform + rate derivation (incl. counter reset); alert rule evaluation incl. hysteresis and open/resolve transitions.
+- **Unit (pytest):** agent readers against fake host trees, spool and delivery; contract validation — valid example payloads in `contracts/fixtures/valid/`, invalid cases as a mutation table over `edgeio_contracts.samples.sample_payload()`; transform + rate derivation (incl. counter reset); alert rule evaluation incl. hysteresis and open/resolve transitions.
 - **Integration (`tests/integration/`, Testcontainers):** produce valid + invalid messages → assert rows in `health_readings`, `devices`, `alerts`; assert DLQ receives invalid ones; assert redelivery doesn't duplicate rows.
 - **API:** FastAPI `TestClient` against a migrated, seeded Timescale container.
 - **Dashboard:** Vitest + Testing Library for components.
@@ -278,4 +261,4 @@ Ports: dashboard `5173` (`DASHBOARD_PORT`), API `8000`, Kafka `9092` (host) / `k
 
 ## 15. Build status
 
-Design approved 2026-10-06. Plan 1 (pipeline), Plan 2 (REST API + dashboard) and Plan 3 (edge agent for real devices) implemented — see `docs/superpowers/plans/`. Real devices run the agent from `agent/` against the same `device.health` contract, alongside (or instead of) the simulated fleet.
+Design approved 2026-10-06. Plan 1 (pipeline), Plan 2 (REST API + dashboard) and Plan 3 (edge agent for real devices) implemented — see `docs/superpowers/plans/`. On 2026-10-07 the simulator was removed (kept in `edgeiosim`); only real devices report here. The server deployment (no simulator, ports bound per `deploy/server/server.env.example`) is described in §5.
